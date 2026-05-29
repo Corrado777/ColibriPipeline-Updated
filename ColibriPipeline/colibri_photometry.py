@@ -436,8 +436,6 @@ def getStationaryFlux(img_stack,
 ##############################
 ## Dip Detection
 ##############################
-#TODO: Cythonize this function
-
 def dipDetection(fluxProfile, kernel, num, sigma_threshold):
     """
     Checks for geometric dip, and detects dimming using Ricker Wavelet kernel
