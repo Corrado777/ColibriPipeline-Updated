@@ -6,6 +6,7 @@ detection trade study.  Cleaning rules mirror colibri_photometry.dipDetection
 
 from pathlib import Path
 import numpy as np
+from scipy.ndimage import uniform_filter1d
 
 
 # Matches colibri_photometry.py line 473
@@ -57,6 +58,35 @@ def clean(flux_1d):
     if len(lc) < _MIN_LIGHTCURVE_LEN:
         return None
     return lc
+
+
+def star_snr(flux_1d, window=200):
+    """Per-frame SNR of a light curve: median(flux) / std(flux - boxcar_baseline).
+
+    baseline = scipy.ndimage.uniform_filter1d(flux, size=window, mode='reflect').
+    Returns 0.0 if the detrended std is 0.
+
+    Parameters
+    ----------
+    flux_1d : array_like, 1-D
+        Raw flux time series for one star.
+    window : int
+        Size of the boxcar smoothing window for baseline estimation.
+
+    Returns
+    -------
+    float
+        Per-frame SNR estimate.
+    """
+    f = np.asarray(flux_1d, dtype=float)
+    if len(f) == 0:
+        return 0.0
+    baseline = uniform_filter1d(f, size=window, mode='reflect')
+    residual = f - baseline
+    std = float(np.std(residual))
+    if std == 0.0:
+        return 0.0
+    return float(np.median(f) / std)
 
 
 def good_star_indices(flux_2d):

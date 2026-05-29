@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 
 from . import harness
 from . import detectors as det_mod
+from .preprocessing import ALL_PREPROCESSORS
 
 
 def _plot_roc_single(roc, outpath):
@@ -118,6 +119,58 @@ def _plot_power_of_three(roc, outpath):
     plt.close(fig)
 
 
+def _plot_preproc_heatmap(grid_roc, shapes, preps, ref, far, outpath):
+    """Heatmap of completeness @ fixed FAR over (shape x preprocessing)."""
+    M = np.full((len(shapes), len(preps)), np.nan)
+    for i, s in enumerate(shapes):
+        for j, p in enumerate(preps):
+            key = f'{s}@{p}'
+            if key in grid_roc:
+                M[i, j] = harness.completeness_at_far(grid_roc[key]['single'], far)
+    fig, ax = plt.subplots(figsize=(1.6 * len(preps) + 3, 0.8 * len(shapes) + 3))
+    im = ax.imshow(M, cmap='viridis', vmin=0, vmax=max(0.05, np.nanmax(M)), aspect='auto')
+    ax.set_xticks(range(len(preps))); ax.set_xticklabels(preps, rotation=30, ha='right')
+    ax.set_yticks(range(len(shapes))); ax.set_yticklabels(shapes)
+    for i in range(len(shapes)):
+        for j in range(len(preps)):
+            if np.isfinite(M[i, j]):
+                ax.text(j, i, f'{M[i, j]:.2f}', ha='center', va='center',
+                        color='w' if M[i, j] < np.nanmax(M) * 0.6 else 'k', fontsize=8)
+    fig.colorbar(im, ax=ax, label=f'completeness @ {far:.0%} FAR')
+    ax.set_title('Preprocessing x detector shape trade study (single telescope)')
+    fig.tight_layout(); fig.savefig(outpath, dpi=130); plt.close(fig)
+
+
+def _plot_snr_map(cmap, shape, outpath):
+    """2D completeness map over (stellar SNR x event depth)."""
+    M = cmap['completeness']
+    fig, ax = plt.subplots(figsize=(7, 5.5))
+    im = ax.imshow(M, origin='lower', aspect='auto', cmap='viridis', vmin=0, vmax=1,
+                   extent=[cmap['depth_edges'][0], cmap['depth_edges'][-1],
+                           cmap['snr_edges'][0], cmap['snr_edges'][-1]])
+    fig.colorbar(im, ax=ax, label='completeness')
+    ax.set_xlabel('injected event depth'); ax.set_ylabel('stellar per-frame SNR')
+    ax.set_title(f'Completeness map: {shape} (single telescope, ~1% FAR)')
+    fig.tight_layout(); fig.savefig(outpath, dpi=130); plt.close(fig)
+
+
+def _plot_completeness_vs_eventsnr(df, shape, preps, ref, far, outpath):
+    """Completeness vs combined event SNR, one curve per preprocessing method."""
+    fig, ax = plt.subplots(figsize=(7.5, 6))
+    for p in preps:
+        key = f'{shape}@{p}'
+        if f'{key}|{ref}|peak' not in df.columns:
+            continue
+        e = harness.completeness_vs_eventSNR(df, key, ref, far_target=far)
+        ax.plot(e['centers'], e['completeness'], marker='o', label=p)
+    ax.set_xscale('log')
+    ax.set_xlabel('event SNR  ~ depth x stellar_SNR x sqrt(duration)')
+    ax.set_ylabel(f'completeness @ {far:.0%} FAR')
+    ax.set_title(f'{shape}: completeness vs event SNR, by preprocessing')
+    ax.set_ylim(-0.02, 1.02); ax.grid(alpha=0.3); ax.legend()
+    fig.tight_layout(); fig.savefig(outpath, dpi=130); plt.close(fig)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -129,6 +182,12 @@ def main():
     ap.add_argument('--n-scopes', type=int, default=3,
                     help='Bootstrapped telescopes for the power-of-three study.')
     ap.add_argument('--min-median-flux', type=float, default=500.0)
+    ap.add_argument('--n-grid', type=int, default=250,
+                    help='Trials for the preprocessing x shape grid (single scope).')
+    ap.add_argument('--fresnel-stride', type=int, default=60,
+                    help='Fresnel bank subsampling for the grid (higher = faster).')
+    ap.add_argument('--snr-shape', default='RickerDetector',
+                    help='Detector shape used for the SNR-aware figures.')
     ap.add_argument('--outdir', default=str(Path(__file__).parent / 'results'))
     args = ap.parse_args()
 
@@ -195,6 +254,37 @@ def main():
         a = harness.completeness_at_far(roc[det]['and'], 0.01)
         j = harness.completeness_at_far(roc[det]['joint'], 0.01)
         print(f"{det:30s} {s:8.2f} {a:8.2f} {j:8.2f}")
+
+    # --- Preprocessing x shape trade study (single telescope) -----------
+    grid = det_mod.build_grid(fresnel_stride=args.fresnel_stride)
+    shapes = list(det_mod._shape_templates().keys())
+    preps = list(ALL_PREPROCESSORS().keys())
+    print(f"\nPreprocessing x shape grid: {len(grid)} combos x {args.n_grid} "
+          f"inject + {args.n_grid} null (single telescope)...")
+    gdf, gsc, gref = harness.run_trials_bootstrap(
+        source, hosts, grid, n_scopes=1,
+        n_inject=args.n_grid, n_null=args.n_grid, rng=rng)
+    gdf.to_csv(outdir / 'results_grid.csv', index=False)
+    groc = harness.compute_roc(gdf, gsc, gref, detectors=list(grid.keys()))
+
+    _plot_preproc_heatmap(groc, shapes, preps, gref, 0.01,
+                          outdir / 'preprocessing_heatmap.png')
+    _plot_completeness_vs_eventsnr(gdf, args.snr_shape, preps, gref, 0.01,
+                                   outdir / 'completeness_vs_eventSNR.png')
+    # 2D SNR x depth map for the best (shape@prep) by @1% FAR completeness
+    best = max(grid.keys(),
+               key=lambda k: harness.completeness_at_far(groc[k]['single'], 0.01))
+    cmap = harness.completeness_map(gdf, best, gref, far_target=0.01)
+    _plot_snr_map(cmap, best, outdir / 'completeness_map.png')
+    print(f"  wrote grid results + figures to {outdir}")
+
+    print("\n== Preprocessing x shape: completeness at ~1% FAR (single telescope) ==")
+    print(f"{'shape':28s} " + " ".join(f'{p[:9]:>9s}' for p in preps))
+    for s in shapes:
+        cells = [harness.completeness_at_far(groc[f'{s}@{p}']['single'], 0.01) for p in preps]
+        print(f"{s:28s} " + " ".join(f'{c:9.2f}' for c in cells))
+    print(f"\nBest combo @1% FAR: {best} "
+          f"({harness.completeness_at_far(groc[best]['single'],0.01):.2f})")
 
 
 if __name__ == '__main__':

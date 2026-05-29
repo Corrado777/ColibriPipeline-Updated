@@ -155,6 +155,8 @@ def run_trials_real(data_by_scope, matches, scopes, detectors,
     for kind, n in (('inject', n_inject), ('background', n_null)):
         for _ in range(n):
             match = matches[rng.integers(len(matches))]
+            host_flux = np.asarray(data_by_scope[ref_scope]['flux'][match[ref_scope]], dtype=float)
+            host_snr = lc.star_snr(host_flux)
             if kind == 'inject':
                 params = inj.sample_params(rng, exposure_time)
                 profile = inj.make_profile(params, exposure_time)
@@ -162,11 +164,13 @@ def run_trials_real(data_by_scope, matches, scopes, detectors,
                 center_time = ref_time[center_idx]
                 meta = {'depth': inj.injected_depth(profile),
                         'objectRad': params['objectRad'], 'dist': params['dist'],
-                        'center_frame': center_idx}
+                        'center_frame': center_idx,
+                        'snr': host_snr, 'duration': len(profile)}
             else:
                 profile, center_time = None, None
                 meta = {'depth': np.nan, 'objectRad': np.nan, 'dist': np.nan,
-                        'center_frame': -1}
+                        'center_frame': -1,
+                        'snr': host_snr, 'duration': np.nan}
             flux_by_scope = _build_flux(match, center_time, profile)
             row = {'kind': kind, 'ref_idx': match[ref_scope], **meta}
             row.update(_score_event(flux_by_scope, None, detectors,
@@ -196,6 +200,7 @@ def run_trials_bootstrap(source_data, host_indices, detectors, n_scopes,
     for kind, n in (('inject', n_inject), ('background', n_null)):
         for _ in range(n):
             host = int(host_indices[rng.integers(len(host_indices))])
+            host_snr = lc.star_snr(flux2d[host])
             scopes_flux = bs.make_independent_scopes(
                 flux2d[host], n_scopes, rng, block=bootstrap_block, names=scope_names)
             if kind == 'inject':
@@ -206,10 +211,12 @@ def run_trials_bootstrap(source_data, host_indices, detectors, n_scopes,
                                for s, f in scopes_flux.items()}
                 meta = {'depth': inj.injected_depth(profile),
                         'objectRad': params['objectRad'], 'dist': params['dist'],
-                        'center_frame': center_idx}
+                        'center_frame': center_idx,
+                        'snr': host_snr, 'duration': len(profile)}
             else:
                 meta = {'depth': np.nan, 'objectRad': np.nan, 'dist': np.nan,
-                        'center_frame': -1}
+                        'center_frame': -1,
+                        'snr': host_snr, 'duration': np.nan}
             row = {'kind': kind, 'ref_idx': host, **meta}
             row.update(_score_event(scopes_flux, None, detectors,
                                     ref_scope, exposure_time))
@@ -303,3 +310,208 @@ def completeness_at_far(roc_entry, target_far=0.01):
     comp = np.asarray(roc_entry['completeness'], dtype=float)
     ok = far <= target_far
     return float(np.nanmax(comp[ok])) if ok.any() else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Brightness/SNR-aware completeness
+# ---------------------------------------------------------------------------
+
+def event_snr(df):
+    """Return a Series: depth * snr * sqrt(duration) (a combined matched-filter
+    event SNR proxy). NaN where not an inject row.
+
+    Parameters
+    ----------
+    df : DataFrame
+        Trial table as returned by run_trials_real or run_trials_bootstrap.
+
+    Returns
+    -------
+    pd.Series of float, same index as df.
+    """
+    mask = df['kind'] == 'inject'
+    result = pd.Series(np.nan, index=df.index, dtype=float)
+    inj_rows = df[mask]
+    result[mask] = (inj_rows['depth'].values
+                    * inj_rows['snr'].values
+                    * np.sqrt(inj_rows['duration'].values.astype(float)))
+    return result
+
+
+def _threshold_at_far(null_peaks, far_target):
+    """Smallest threshold T such that fraction(null_peaks >= T) <= far_target.
+
+    Uses the (1-far_target) quantile of finite null peaks.
+
+    Parameters
+    ----------
+    null_peaks : array_like
+    far_target : float
+
+    Returns
+    -------
+    float
+    """
+    vals = np.asarray(null_peaks, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if len(vals) == 0:
+        return np.inf
+    return float(np.quantile(vals, 1.0 - far_target))
+
+
+def completeness_map(df, det, ref_scope, far_target=0.01, recovery_tol=12,
+                     snr_bins=None, depth_bins=None):
+    """2D completeness over (stellar SNR x event depth) at fixed FAR.
+
+    Uses the single reference-scope policy (columns f'{det}|{ref_scope}|peak'
+    and f'{det}|{ref_scope}|frame') together with 'center_frame', 'snr', and
+    'depth' from the trial table.
+
+    - Threshold T = _threshold_at_far(background-row peaks, far_target).
+    - An inject row is recovered if peak >= T AND |frame - center_frame| <= recovery_tol.
+    - Default snr_bins = np.linspace(0, max_snr, 7); depth_bins = np.linspace(0, 1, 6).
+
+    Parameters
+    ----------
+    df : DataFrame
+    det : str
+        Detector name (e.g. 'BoxDetector').
+    ref_scope : str
+    far_target : float
+    recovery_tol : int
+    snr_bins : array_like or None
+    depth_bins : array_like or None
+
+    Returns
+    -------
+    dict with keys:
+        'snr_edges'    : 1-D ndarray  (len = n_snr_bins + 1)
+        'depth_edges'  : 1-D ndarray  (len = n_depth_bins + 1)
+        'completeness' : 2-D ndarray  (rows = snr, cols = depth), NaN for empty cells
+        'counts'       : 2-D ndarray  (n injections per cell)
+    """
+    peak_col = f'{det}|{ref_scope}|peak'
+    frame_col = f'{det}|{ref_scope}|frame'
+
+    null_df = df[df['kind'] == 'background']
+    inj_df = df[df['kind'] == 'inject'].copy()
+
+    T = _threshold_at_far(null_df[peak_col].values, far_target)
+
+    recovered = ((inj_df[peak_col].values >= T) &
+                 (np.abs(inj_df[frame_col].values - inj_df['center_frame'].values)
+                  <= recovery_tol))
+    inj_df = inj_df.copy()
+    inj_df['_recovered'] = recovered
+
+    snr_vals = inj_df['snr'].values.astype(float)
+    depth_vals = inj_df['depth'].values.astype(float)
+
+    if snr_bins is None:
+        max_snr = np.nanmax(snr_vals) if len(snr_vals) > 0 else 1.0
+        snr_bins = np.linspace(0, max_snr, 7)
+    else:
+        snr_bins = np.asarray(snr_bins, dtype=float)
+
+    if depth_bins is None:
+        depth_bins = np.linspace(0, 1, 6)
+    else:
+        depth_bins = np.asarray(depth_bins, dtype=float)
+
+    n_snr = len(snr_bins) - 1
+    n_depth = len(depth_bins) - 1
+    completeness = np.full((n_snr, n_depth), np.nan)
+    counts = np.zeros((n_snr, n_depth), dtype=int)
+
+    for i in range(n_snr):
+        for j in range(n_depth):
+            s_lo, s_hi = snr_bins[i], snr_bins[i + 1]
+            d_lo, d_hi = depth_bins[j], depth_bins[j + 1]
+            # include right edge only in last bin to avoid double-counting
+            if i < n_snr - 1:
+                s_mask = (snr_vals >= s_lo) & (snr_vals < s_hi)
+            else:
+                s_mask = (snr_vals >= s_lo) & (snr_vals <= s_hi)
+            if j < n_depth - 1:
+                d_mask = (depth_vals >= d_lo) & (depth_vals < d_hi)
+            else:
+                d_mask = (depth_vals >= d_lo) & (depth_vals <= d_hi)
+            cell = s_mask & d_mask
+            n_cell = int(cell.sum())
+            counts[i, j] = n_cell
+            if n_cell > 0:
+                completeness[i, j] = float(inj_df['_recovered'].values[cell].mean())
+
+    return {
+        'snr_edges': snr_bins,
+        'depth_edges': depth_bins,
+        'completeness': completeness,
+        'counts': counts,
+    }
+
+
+def completeness_vs_eventSNR(df, det, ref_scope, far_target=0.01, recovery_tol=12,
+                              n_bins=12):
+    """Completeness vs the combined event SNR (event_snr).
+
+    Same threshold/recovery logic as completeness_map, binned along event_snr
+    in log-spaced bins over the finite positive range.
+
+    Parameters
+    ----------
+    df : DataFrame
+    det : str
+    ref_scope : str
+    far_target : float
+    recovery_tol : int
+    n_bins : int
+
+    Returns
+    -------
+    dict with keys:
+        'centers'      : 1-D ndarray, bin centres (geometric mean of edges)
+        'completeness' : 1-D ndarray, completeness per bin (NaN for empty bins)
+        'counts'       : 1-D ndarray of int, n injections per bin
+    """
+    peak_col = f'{det}|{ref_scope}|peak'
+    frame_col = f'{det}|{ref_scope}|frame'
+
+    null_df = df[df['kind'] == 'background']
+    inj_df = df[df['kind'] == 'inject'].copy()
+
+    T = _threshold_at_far(null_df[peak_col].values, far_target)
+
+    recovered = ((inj_df[peak_col].values >= T) &
+                 (np.abs(inj_df[frame_col].values - inj_df['center_frame'].values)
+                  <= recovery_tol))
+    inj_df['_recovered'] = recovered
+
+    esnr = (inj_df['depth'].values.astype(float)
+            * inj_df['snr'].values.astype(float)
+            * np.sqrt(inj_df['duration'].values.astype(float)))
+    inj_df['_esnr'] = esnr
+
+    finite_pos = esnr[np.isfinite(esnr) & (esnr > 0)]
+    if len(finite_pos) == 0:
+        return {'centers': np.array([]), 'completeness': np.array([]), 'counts': np.array([], dtype=int)}
+
+    lo, hi = np.log10(finite_pos.min()), np.log10(finite_pos.max())
+    if lo == hi:
+        hi = lo + 1.0
+    edges = np.logspace(lo, hi, n_bins + 1)
+    centers = np.sqrt(edges[:-1] * edges[1:])  # geometric mean
+
+    completeness = np.full(n_bins, np.nan)
+    counts = np.zeros(n_bins, dtype=int)
+
+    for i in range(n_bins):
+        if i < n_bins - 1:
+            mask = (esnr >= edges[i]) & (esnr < edges[i + 1])
+        else:
+            mask = (esnr >= edges[i]) & (esnr <= edges[i + 1])
+        n_cell = int(mask.sum())
+        counts[i] = n_cell
+        if n_cell > 0:
+            completeness[i] = float(inj_df['_recovered'].values[mask].mean())
+
+    return {'centers': centers, 'completeness': completeness, 'counts': counts}
