@@ -32,12 +32,26 @@ science stage.
 | `run_trade_study.py` | CLI driver → CSVs + PNG figures + summary tables. |
 
 Detection is factored into a **preprocessing** step × a **dip-template shape**:
-- Shapes: `RickerDetector` (production baseline), `BoxDetector` (geometric),
-  `MultiWidthRickerDetector`, `FresnelMatchedFilterDetector` (40 Hz Fresnel bank),
-  `NormalizedSNRDetector` (single-frame / Pass-style).
+- Shapes: `RickerDetector` (production baseline), `BoxDetector` (geometric
+  flat-dip, single width — 6 frames / 0.15 s), `MultiWidthRickerDetector`,
+  `FresnelMatchedFilterDetector` (40 Hz Fresnel bank),
+  `NormalizedSNRDetector` (single-frame / Pass-style),
+  `MultiWidthBoxDetector` (BLS-style bank of flat-dip box templates at widths
+  2, 3, 4, 6, 9, 14, 20, 32 frames = 0.05–0.8 s at 40 Hz; takes the per-frame
+  maximum significance over all widths).
 - Preprocessors: `MeanSubtract`, `MedianDivide`, `HighPass`, `Bandpass`, `Whiten`.
-- `ALL_DETECTORS()` = the five shapes on the default `MeanSubtract`.
+- `ALL_DETECTORS()` = the six shapes on the default `MeanSubtract`.
   `build_grid()` = the full {shape}×{preprocessing} grid (names `shape@prep`).
+
+> **Caveat — Ricker kernel width vs. frames:** `astropy.convolution.RickerWavelet1DKernel(width)`
+> takes a *scale parameter*, not a frame count. `RickerWavelet1DKernel(6)` produces a
+> **49-sample (~1.23 s) bipolar wavelet** at 40 Hz, not a 6-frame kernel. The
+> production pipeline (`colibri_photometry.dipDetection`) builds
+> `RickerWavelet1DKernel(6)` intending ~0.15 s (`expected_length=0.15`,
+> `kernel_frames=6`) but actually gets a ~1.2 s kernel — likely **too wide for the
+> shortest sub-second events**. The box templates ARE specified directly in frames,
+> so `BoxDetector(6)` and `MultiWidthBoxDetector` widths are true frame counts; a
+> box-vs-Ricker comparison at "width 6" is **not** comparing equal durations.
 
 ## Adding a method
 

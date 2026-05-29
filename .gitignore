@@ -26,3 +26,5 @@ colibri_photometry.html
 # ignore claude instructions
 CLAUDE.md
 /notebooks/*
+# but keep the detection trade-study notebook tracked
+!/notebooks/detection_trade_study.ipynb

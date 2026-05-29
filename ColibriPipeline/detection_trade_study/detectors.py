@@ -139,6 +139,9 @@ def _shape_templates():
         'RickerDetector': [ricker_template(6)],
         'BoxDetector': [box_template(6)],
         'MultiWidthRickerDetector': [ricker_template(w) for w in range(1, 13)],
+        # BLS-style scan: flat-dip boxes spanning real event durations
+        # (2-32 frames = 0.05-0.8 s); per-frame max significance over widths.
+        'MultiWidthBoxDetector': [box_template(w) for w in (2, 3, 4, 6, 9, 14, 20, 32)],
         'FresnelMatchedFilterDetector': load_fresnel_templates(),
         'NormalizedSNRDetector': [delta_template()],
     }

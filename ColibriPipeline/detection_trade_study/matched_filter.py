@@ -168,15 +168,13 @@ def matched_filter(series, template, noise, demean=False):
         # IFFT back to time domain → circular cross-correlation
         score_circ = np.fft.irfft(cross, n=n)
 
-        # mode='same' shift: roll so that the centre of the template aligns
-        # with the corresponding series position.  irfft convention places
-        # lag 0 at index 0; lag k at index k (positive) and at n-k (negative).
-        # We want the peak to appear at the frame where the template centre
-        # sits, i.e. shift by -(t_len//2) so the peak moves from index ~0
-        # to the actual event frame.  np.roll with a negative shift moves
-        # elements left (earlier indices go to later positions, so the response
-        # at lag t_len//2 appears at index 0 → we roll by -(t_len//2)).
-        shift = -(t_len // 2)
+        # mode='same' centering.  The zero-padded template sits at indices
+        # [0, t_len); the circular cross-correlation peaks at the lag where the
+        # template START aligns with the data feature, i.e. at (event_centre -
+        # t_len//2).  To report the peak at the event CENTRE we roll RIGHT by
+        # +(t_len//2).  (Rolling the other way lands the peak a full template
+        # length early, which silently zeroed out long-template whiten scores.)
+        shift = (t_len // 2)
         score_circ = np.roll(score_circ, shift)
 
         score = score_circ / norm
