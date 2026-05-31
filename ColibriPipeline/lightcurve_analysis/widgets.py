@@ -189,13 +189,19 @@ def explore(cat):
         opts = _filtered_options(
             cat, tuple(gmag_slider.value), snr_slider.value)
         prev = star_dropdown.value
+        # Unobserve while mutating options/value so ipywidgets' own auto-
+        # adjustment of value (when prev is no longer in opts) doesn't fire
+        # _redraw a second time before the explicit call below.
+        star_dropdown.unobserve(_redraw, names='value')
         star_dropdown.options = opts
         if opts:
             values = [v for _, v in opts]
             star_dropdown.value = prev if prev in values else values[0]
+        star_dropdown.observe(_redraw, names='value')
         _redraw()
 
     def _redraw(*_):
+        import matplotlib.pyplot as plt
         with out:
             out.clear_output(wait=True)
             if star_dropdown.value is None:
@@ -203,14 +209,16 @@ def explore(cat):
                 return
             bs = bin_slider.value if bin_slider.value > 0 else None
             try:
-                fig = explore_static(
-                    cat, int(star_dropdown.value), kind=kind_toggle.value,
-                    bin_seconds=bs, diff_method=method_dropdown.value,
-                    comp_rad_pix=float(comp_slider.value))
-                # display(fig) works inside Output regardless of backend.
+                # plt.ioff() suppresses the %matplotlib inline backend's
+                # automatic display-on-create, so the figure renders exactly
+                # once via the explicit display() call below.
+                with plt.ioff():
+                    fig = explore_static(
+                        cat, int(star_dropdown.value), kind=kind_toggle.value,
+                        bin_seconds=bs, diff_method=method_dropdown.value,
+                        comp_rad_pix=float(comp_slider.value))
                 display(fig)
-                import matplotlib.pyplot as plt
-                plt.close(fig)  # prevent duplicate display outside Output
+                plt.close(fig)
             except Exception as exc:  # noqa: BLE001
                 print(f"plot failed: {type(exc).__name__}: {exc}")
 
