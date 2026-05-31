@@ -198,8 +198,10 @@ def _match_sky(local_radec, global_radec, tol_arcsec):
     from astropy.coordinates import SkyCoord
     from astropy import units as u
 
-    local = SkyCoord(ra=local_radec[:, 0] * u.deg, dec=local_radec[:, 1] * u.deg)
-    glob = SkyCoord(ra=global_radec[:, 0] * u.deg, dec=global_radec[:, 1] * u.deg)
+    local_dec = np.clip(local_radec[:, 1], -90.0, 90.0)
+    glob_dec = np.clip(global_radec[:, 1], -90.0, 90.0)
+    local = SkyCoord(ra=local_radec[:, 0] * u.deg, dec=local_dec * u.deg)
+    glob = SkyCoord(ra=global_radec[:, 0] * u.deg, dec=glob_dec * u.deg)
     idx, sep2d, _ = local.match_to_catalog_sky(glob)
     pairs = []
     for li in range(len(local)):
