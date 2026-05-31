@@ -1,0 +1,11 @@
+# Optional extras for the lightcurve_analysis interactive layer ONLY.
+# The core package + CLI need none of these; install them only if you want
+# the ipywidgets explorer (lightcurve_analysis/widgets.py) and the
+# notebooks/lightcurve_explorer.ipynb to be fully interactive.
+#
+#   pip install -r requirements-notebook.txt
+#
+# Pinned loosely on purpose.
+ipywidgets>=8.0
+jupyterlab>=4.0
+notebook>=7.0
