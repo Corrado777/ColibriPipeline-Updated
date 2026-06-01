@@ -21,6 +21,7 @@ import getRAdec
 import astrometrynet_funcs
 import sys, os, time
 import argparse
+import colibri_config as cfg
 
 def readRAdec(filepath):                                    #modified readFile from Colibri Pipeline
     '''read in a .txt detection file and get information from it'''
@@ -516,7 +517,7 @@ def readFile(filepath):
 
 ''' set up parameters for running the code '''
 global telescope
-telescope = os.environ.get('COMPUTERNAME', os.environ.get('COLIBRI_TELESCOPE', 'GREENBIRD'))  #identifier for telescope
+telescope = cfg.current_telescope()  #identifier for telescope
 gain = 'high'           #gain level for .rcd files ('low' or 'high')
 #soln_order = 4      #tweak order for astrometry.net solution
 # obs_date = datetime.date(2021, 8, 4)    #date observations 
@@ -541,7 +542,7 @@ gain = 'high'           #gain level for .rcd files ('low' or 'high')
 # print(process_date)
 
 '''begin program'''
-if __name__ == '__main__':
+def main():
 
     ''' Argument parsing added by MJM - July 20, 2022 '''
     arg_parser = argparse.ArgumentParser(description=""" Run secondary Colibri processing
@@ -717,3 +718,7 @@ if __name__ == '__main__':
     #print('Time spent on astrometry... %f' % transformtime)
     #print('Time spent on Gaia... %f' % gaiatime)
     #print('Time spend on finding best kernel... %f' % occulttime)
+
+
+if __name__ == '__main__':
+    main()

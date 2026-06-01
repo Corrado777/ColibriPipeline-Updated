@@ -32,23 +32,16 @@ import logging
 
 #-------------------------------global vars-----------------------------------#
 
-# Path variables - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
-if _env == 'sim':
-    _sim_root = Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                    '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    _telescope = os.environ.get('COLIBRI_TELESCOPE',
-                                os.environ.get('COMPUTERNAME', 'GREENBIRD')).upper()
-    BASE_PATH = _sim_root / _telescope_colors.get(_telescope, 'Green')
-    RED_BASE   = _sim_root / 'Red'
-    GREEN_BASE = _sim_root / 'Green'
-    BLUE_BASE  = _sim_root / 'Blue'
-else:
-    BASE_PATH = Path('D:/')
-    RED_BASE   = Path('R:/')
-    GREEN_BASE = Path('G:/')
-    BLUE_BASE  = Path('B:/')
+# Path variables - environment-aware (sim vs real); see colibri_config.
+# self_local=False: real-mode scopes stay R:/ G:/ B:/ (this stage cross-mounts
+# all three rather than localizing the running scope to D:/).
+import colibri_config as cfg
+_env = cfg.ENV
+BASE_PATH = cfg.resolve_base_path(default_color='Green')
+_scope_bases = cfg.telescope_base_dirs(self_local=False)
+RED_BASE   = _scope_bases['REDBIRD']
+GREEN_BASE = _scope_bases['GREENBIRD']
+BLUE_BASE  = _scope_bases['BLUEBIRD']
 DATA_PATH = BASE_PATH / 'ColibriData'
 IMGE_PATH = BASE_PATH / 'ColibriImages'
 ARCHIVE_PATH = BASE_PATH / 'ColibriArchive'
@@ -385,7 +378,8 @@ def updateNPYwithWCS(current_name, obsdate):
         signal_path.touch()
 
 
-if __name__ == '__main__':
+def main():
+    global verboseprint
 
 
 ###########################
@@ -414,7 +408,7 @@ if __name__ == '__main__':
         verboseprint = print
 
     # Environment variable to ensure BLUEBIRD is used when required
-    current_name = os.environ['COMPUTERNAME']
+    current_name = cfg.current_telescope()
 
 
 ###########################
@@ -439,3 +433,7 @@ if __name__ == '__main__':
         for starhour_file in (ARCHIVE_PATH / hyphonateDate(obsdate)).glob('starhours_*.txt'):
             starhour_file.unlink()
         (ARCHIVE_PATH / hyphonateDate(obsdate)/ f'starhours_{starhours}.txt').touch()
+
+
+if __name__ == '__main__':
+    main()

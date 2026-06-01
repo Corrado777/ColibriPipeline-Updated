@@ -27,17 +27,10 @@ import astrometrynet_funcs
 #import getRAdec
 
 
-# Directory structure - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
-if _env == 'sim':
-    _sim_root = Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                    '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    _telescope = os.environ.get('COLIBRI_TELESCOPE',
-                                os.environ.get('COMPUTERNAME', 'GREENBIRD')).upper()
-    BASE_PATH = _sim_root / _telescope_colors.get(_telescope, 'Green')
-else:
-    BASE_PATH = Path('D:/')
+# Directory structure - environment-aware (sim vs real); see colibri_config.
+import colibri_config as cfg
+_env = cfg.ENV
+BASE_PATH = cfg.resolve_base_path(default_color='Green')
 
 
 
@@ -146,22 +139,11 @@ def updateNPY_RAdec(transform, star_pos_file, savefile=None):
     return coords
 
 
-def getRAdec_arrays(transform, star_pos):
-    '''get WCS transform from astrometry.net header
-    input: astrometry.net output file (path object), star position file (.npy path object), filename to save to (path object)
-    returns: coordinate transform'''
-    
-    #load in transformation information
-#    transform_im = fits.open(transform_file)
-#    transform = wcs.WCS(transform_im[0].header)
-    
-    #get transformation
-    world = transform.all_pix2world(star_pos, 0,ra_dec_order=True) #2022-07-21 Roman A. changed solution function to fit SIP distortion
-                
-    # output table: | x | y | RA | Dec | 
-    #coords = np.array([star_pos[:,0], star_pos[:,1], world[:,0], world[:,1]]).transpose()
-    coords = np.hstack((star_pos[:,0], star_pos[:,1], world[:,0], world[:,1]))
-    return coords
+# getRAdec_arrays() previously defined here was a duplicate of the copy in
+# getRAdec.py; both are now consolidated in colibri_io.astrometry (Wave 1
+# refactor). Imported below for back-compat with any caller referencing
+# coordsfinder.getRAdec_arrays.
+from colibri_io.astrometry import getRAdec_arrays  # noqa: F401
 
 
 def getRAdecfromFile(transform_file, star_pos_file, savefile):
@@ -329,7 +311,7 @@ def readFile(filepath):
 
 #-----------------------------------main--------------------------------------#
 
-if __name__ == '__main__':
+def main():
     arg_parser = argparse.ArgumentParser(description="Run secondary Colibri processing",
                                         formatter_class=argparse.RawTextHelpFormatter)
     arg_parser.add_argument('-d', '--date', help='Observation date (YYYY/MM/DD) of data to be processed.')
@@ -379,3 +361,7 @@ if __name__ == '__main__':
                 
         except:
             print("WCS Transformation failed, moving to the next one. Will be handled by future exception")
+
+
+if __name__ == '__main__':
+    main()

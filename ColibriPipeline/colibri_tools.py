@@ -35,37 +35,39 @@ from PIL import Image
 
 #-------------------------------global vars-----------------------------------#
 
-# Path variables
-BASE_PATH = Path('D:/')
+# Single source of truth for env-aware paths + shared constants. Importing the
+# names below keeps colibri_tools' historical public API intact while routing
+# resolution (and the D:/ vs sim layout) through colibri_config.
+import colibri_config as cfg
+
+# Path variables (env-aware: D:/ on a telescope, <sim_root>/<color> in sim)
+BASE_PATH = cfg.resolve_base_path()
 DATA_PATH = BASE_PATH / 'ColibriData'
 IMGE_PATH = BASE_PATH / 'ColibriImages'
 ARCHIVE_PATH = BASE_PATH / 'ColibriArchive'
 WEATHER_PATH = BASE_PATH / 'Logs' / 'Weather'
 
-# Timestamp format
-OBSDATE_FORMAT = '%Y%m%d'
-MINDIR_FORMAT  = '%Y%m%d_%H.%M.%S.%f'
-TIMESTAMP_FORMAT = '%Y-%m-%dT%H:%M:%S.%f'
-BARE_FORMAT = '%Y-%m-%d_%H%M%S_%f'
-CLOCK_FORMAT   = '%H:%M:%S'
-ACPLOG_STRP    = '%a %b %d %H:%M:%S %Z %Y'
+# Timestamp formats (re-exported from colibri_config)
+OBSDATE_FORMAT   = cfg.OBSDATE_FORMAT
+MINDIR_FORMAT    = cfg.MINDIR_FORMAT
+TIMESTAMP_FORMAT = cfg.TIMESTAMP_FORMAT
+BARE_FORMAT      = cfg.BARE_FORMAT
+CLOCK_FORMAT     = cfg.CLOCK_FORMAT
+ACPLOG_STRP      = cfg.ACPLOG_STRP
 
 # Regex patterns
-MINDIR_REGEX = re.compile(r'\d{8}_\d{2}\.\d{2}\.\d{2}\.\d{3}')
+MINDIR_REGEX = cfg.MINDIR_REGEX
 
 
 # Site longitude/latitude
-SITE_LAT  = 43.1933116667
-SITE_LON = -81.3160233333
-SITE_HGT = 224
-SITE_LOC  = EarthLocation(lat=SITE_LAT,
-                         lon=SITE_LON,
-                         height=SITE_HGT)
+SITE_LAT = cfg.SITE_LAT
+SITE_LON = cfg.SITE_LON
+SITE_HGT = cfg.SITE_HGT
+SITE_LOC = cfg.site_location()
 
 # Weather Files
 WEATHER_CSV = WEATHER_PATH / 'weather.csv'
-WEATHER_HEADERS = ['unix_time', 'temp', 'humidity', 'wind_speed', 'wind_direction',
-                   'rain_value', 'sky_temp', 'ground_temp', 'alert', 'polaris_mag']
+WEATHER_HEADERS = cfg.WEATHER_HEADERS
 
 
 #----------------------------------class--------------------------------------#

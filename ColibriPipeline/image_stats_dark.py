@@ -31,17 +31,10 @@ import os
 import sys
 
 
-# Directory structure - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
-if _env == 'sim':
-    _sim_root = pathlib.Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                            '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    _telescope = os.environ.get('COLIBRI_TELESCOPE',
-                                os.environ.get('COMPUTERNAME', 'GREENBIRD')).upper()
-    BASE_PATH = _sim_root / _telescope_colors.get(_telescope, 'Green')
-else:
-    BASE_PATH = pathlib.Path('D:/')
+# Directory structure - environment-aware (sim vs real); see colibri_config.
+import colibri_config as cfg
+_env = cfg.ENV
+BASE_PATH = cfg.resolve_base_path(default_color='Green')
 import argparse
 
 #Mike's rcd section ---------------------------------------------------------
@@ -242,13 +235,13 @@ def get_ReadNoise(FirstDark,SecondDark,gain):
     return ReadNoise
 
 #--------------------------------------------------------------------------------
-telescope = os.environ['COMPUTERNAME']       #identifier for telescope
+telescope = cfg.current_telescope()          #identifier for telescope
 gain = 'high'           #gain level for .rcd files ('low' or 'high')
 
-if __name__ == '__main__':
+def main():
    # if len(sys.argv) > 1:
    #     date = sys.argv[1]   #night directory
-   
+
     '''--------------observation & solution info----------------'''
     #obs_date = datetime.date(2022, 7, 6)           #date of observation
 #    #print('Telescope: Green, gain: HIGH\n')
@@ -486,3 +479,7 @@ if __name__ == '__main__':
 
     except TypeError:
         print("TypeError: Check your data structure. There may be a repeating header in the file.")
+
+
+if __name__ == '__main__':
+    main()

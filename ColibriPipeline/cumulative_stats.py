@@ -27,23 +27,15 @@ from matplotlib.ticker import MaxNLocator
 
 #-------------------------------global vars-----------------------------------#
 
-# Path variables - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
-if _env == 'sim':
-    _sim_root = Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                    '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    _telescope = os.environ.get('COLIBRI_TELESCOPE',
-                                os.environ.get('COMPUTERNAME', 'GREENBIRD')).upper()
-    BASE_PATH = _sim_root / _telescope_colors.get(_telescope, 'Green')
-    RED_BASE   = _sim_root / 'Red'
-    GREEN_BASE = _sim_root / 'Green'
-    BLUE_BASE  = _sim_root / 'Blue'
-else:
-    BASE_PATH = Path('D:/')
-    RED_BASE   = Path('R:/')
-    GREEN_BASE = Path('D:/')
-    BLUE_BASE  = Path('B:/')
+# Path variables - environment-aware (sim vs real); see colibri_config.
+# self_local=True: real-mode running scope (Green) is the locally-mounted D:/.
+import colibri_config as cfg
+_env = cfg.ENV
+BASE_PATH = cfg.resolve_base_path(default_color='Green')
+_scope_bases = cfg.telescope_base_dirs(self_local=True)
+RED_BASE   = _scope_bases['REDBIRD']
+GREEN_BASE = _scope_bases['GREENBIRD']
+BLUE_BASE  = _scope_bases['BLUEBIRD']
 DATA_PATH = BASE_PATH / 'ColibriData'
 IMGE_PATH = BASE_PATH / 'ColibriImages'
 ARCHIVE_PATH = BASE_PATH / 'ColibriArchive'
@@ -409,7 +401,8 @@ def hyphonateDate(obsdate):
 
 #-------------------------------main------------------------------------------#
 
-if __name__ == '__main__':
+def main():
+    global verboseprint
 
 
 ###########################
@@ -441,7 +434,7 @@ if __name__ == '__main__':
         verboseprint = print
 
     # Environment variable to ensure GREENBIRD is used
-    if os.environ['COMPUTERNAME'] != 'GREENBIRD':
+    if cfg.current_telescope() != 'GREENBIRD':
         raise Exception("ERROR: This script must be run on GREENBIRD!")
 
     # Load the cumulative statistics compendium.
@@ -526,3 +519,7 @@ if __name__ == '__main__':
     if gen_plot:
         plotOccCandidates()
         plotMatchedCandidates(sso_df)
+
+
+if __name__ == '__main__':
+    main()

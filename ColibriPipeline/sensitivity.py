@@ -40,18 +40,17 @@ import read_npy
 polynom_order = '4th'                           #order of astrometry.net plate solution polynomial
 ap_r = 3                                        #radius of aperture for photometry
 gain = 'high'                                   #which gain to take from rcd files ('low' or 'high')
+import colibri_config as cfg
 global telescope
-telescope = os.environ['COMPUTERNAME']       #telescope identifier
+telescope = cfg.current_telescope()          #telescope identifier
 #field_name = 'field1'                           #name of field observed
 
-# Telescope Code Dictionary - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
+# Telescope Code Dictionary - environment-aware (sim vs real); see colibri_config.
+# Real-mode keeps the drive-relative 'R:'/'G:'/'B:'/'D:' forms verbatim.
+_env = cfg.ENV
 if _env == 'sim':
-    _sim_root = pathlib.Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                            '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    SELF_BASE_DIR = _sim_root / _telescope_colors.get(telescope, 'Green')
-    TELESCOPE_BASE_DIR = {name: _sim_root / color for name, color in _telescope_colors.items()}
+    SELF_BASE_DIR = cfg.resolve_base_path(telescope, default_color='Green')
+    TELESCOPE_BASE_DIR = cfg.telescope_base_dirs()
 else:
     TELESCOPE_BASE_DIR = {'REDBIRD':pathlib.Path('R:'),
                           'GREENBIRD':pathlib.Path('G:'),
@@ -293,7 +292,8 @@ def findSimilarMinute(timestamp, target_df):
 
 '''------------set up--------------------'''
 
-if __name__ == '__main__':
+def main():
+    global obs_date, obs_time, field_centre, save_path, detect_thresh
 
     print('setting up')
     #time and date of observations/processing
@@ -660,3 +660,7 @@ if __name__ == '__main__':
     final['dec_diff']  = (final['dec'] - final['Gaia_dec'])
 
     RAdec_diffPlot(final)
+
+
+if __name__ == '__main__':
+    main()

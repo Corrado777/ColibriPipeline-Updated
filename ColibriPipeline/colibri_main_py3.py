@@ -41,17 +41,10 @@ import logging
 
 #-------------------------------global vars-----------------------------------#
 
-# Directory structure - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
-if _env == 'sim':
-    _sim_root = pathlib.Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                            '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    _telescope = os.environ.get('COLIBRI_TELESCOPE',
-                                os.environ.get('COMPUTERNAME', 'GREENBIRD')).upper()
-    BASE_PATH = _sim_root / _telescope_colors.get(_telescope, 'Red')
-else:
-    BASE_PATH = pathlib.Path('D:/')
+# Directory structure - environment-aware (sim vs real); see colibri_config.
+import colibri_config as cfg
+_env = cfg.ENV
+BASE_PATH = cfg.resolve_base_path(default_color='Red')
 DATA_PATH = BASE_PATH / 'ColibriData'
 IMGE_PATH = BASE_PATH / 'ColibriImages'
 ARCHIVE_PATH = BASE_PATH / 'ColibriArchive'
@@ -704,9 +697,13 @@ def firstOccSearch(minuteDir, MasterDarkList, kernel, exposure_time, sigma_thres
 #------------------------------------main-------------------------------------#
 
 
-if __name__ == '__main__':
-    
-    
+def main():
+
+    # These names are reassigned below and are read as module-level globals by
+    # getUnprocessedMinutes() / writePrimarySummary(); keep them at module scope.
+    global BASE_PATH, DATA_PATH, IMGE_PATH, ARCHIVE_PATH, telescope
+
+
 ###########################
 ## Argument Parser Setup
 ###########################
@@ -893,3 +890,5 @@ if __name__ == '__main__':
         print(f"Ran for {end_time - start_time} seconds", file=sys.stderr)
 
 
+if __name__ == '__main__':
+    main()

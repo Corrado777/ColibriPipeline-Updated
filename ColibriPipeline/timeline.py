@@ -58,23 +58,15 @@ ACPLOG_STRP    = '%a %b %d %H:%M:%S %Z %Y'
 MINUTEDIR_STRP = '%Y%m%d_%H.%M.%S.%f'
 TIMESTAMP_STRP = '%Y-%m-%dT%H:%M:%S.%f'
 
-# Directory structure - environment-aware (sim vs real)
-_env = os.environ.get('COLIBRI_ENV', 'real').lower()
-_telescope_colors = {'REDBIRD': 'Red', 'GREENBIRD': 'Green', 'BLUEBIRD': 'Blue'}
-if _env == 'sim':
-    _sim_root = Path(os.environ.get('COLIBRI_SIM_ROOT',
-                                    '/home/agirmen/research_data/ColibriPipelineSimulatedDirs'))
-    _telescope = os.environ.get('COLIBRI_TELESCOPE',
-                                os.environ.get('COMPUTERNAME', 'GREENBIRD')).upper()
-    BASE_PATH = _sim_root / _telescope_colors.get(_telescope, 'Green')
-    RED_BASE   = _sim_root / 'Red'
-    GREEN_BASE = _sim_root / 'Green'
-    BLUE_BASE  = _sim_root / 'Blue'
-else:
-    BASE_PATH  = Path('D:/')
-    RED_BASE   = Path('R:/')
-    GREEN_BASE = Path('D:/')
-    BLUE_BASE  = Path('B:/')
+# Directory structure - environment-aware (sim vs real); see colibri_config.
+# self_local=True: real-mode running scope (Green) is the locally-mounted D:/.
+import colibri_config as cfg
+_env = cfg.ENV
+BASE_PATH = cfg.resolve_base_path(default_color='Green')
+_scope_bases = cfg.telescope_base_dirs(self_local=True)
+RED_BASE   = _scope_bases['REDBIRD']
+GREEN_BASE = _scope_bases['GREENBIRD']
+BLUE_BASE  = _scope_bases['BLUEBIRD']
 CLOUD_PATH = BASE_PATH / 'Logs' / 'Weather' / 'Weather'
 STATS_PATH = BASE_PATH / 'CentralRepo' / 'CumulativeStats'
 
@@ -957,9 +949,9 @@ def getPrevDate(path):
 #------------------------------------main-------------------------------------#
 
 
-if __name__ == '__main__':
-    
-    
+def main():
+
+
 ###########################
 ## Argument Parser & Setup
 ###########################
@@ -1497,3 +1489,7 @@ if __name__ == '__main__':
             print(f"{machine.name} Errors:")
             for error in machine.errors:
                 print("    " + error)
+
+
+if __name__ == '__main__':
+    main()
