@@ -560,7 +560,7 @@ def _build_parser():
         prog='python -m detection.rerun',
         description='Rerun dip detection over an archived Colibri night.',
     )
-    p.add_argument('--telescope', required=True,
+    p.add_argument('--telescope', default=None,
                    help='Telescope label (REDBIRD/GREENBIRD/BLUEBIRD or color).')
     p.add_argument('--date', required=True, help='Night date (YYYY-MM-DD).')
     p.add_argument('--detector', default='box', choices=['box', 'ricker'],
@@ -622,6 +622,9 @@ def main(argv=None):
         print('  n matches    :', match_result['n_matches'])
         print('  matched dir  :', match_result['matched_dir'])
         return 0
+
+    if not args.telescope:
+        raise SystemExit('error: --telescope is required unless --match is set')
 
     result = rerun_night(
         args.telescope, args.date, config,

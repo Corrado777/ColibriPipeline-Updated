@@ -413,8 +413,29 @@ def _event_date(event: MatchedEvent):
     return event.timestamp.split("_", 1)[0] if "_" in event.timestamp else event.timestamp
 
 
+def _normalize_flux_curve(flux, scale=None):
+    """Normalize a flux curve by a robust positive scale.
+
+    The matched-event viewer compares telescopes with different throughput, so
+    the plotted raw flux, convolved flux, and highlighted dip window all share
+    the same per-star normalization factor. The baseline is the median of the
+    available raw flux samples; if that is unavailable or degenerate, we fall
+    back to a scale of 1.0.
+    """
+    flux = np.asarray(flux, dtype=float)
+
+    if scale is None:
+        finite = flux[np.isfinite(flux)]
+        scale = float(np.nanmedian(finite)) if finite.size else 1.0
+
+    if not np.isfinite(scale) or scale == 0.0:
+        scale = 1.0
+
+    return flux / scale, scale
+
+
 def plot_event(event: MatchedEvent, archive_roots=None, ax=None):
-    """Plot a matched event's per-scope full-minute flux with the dip window.
+    """Plot a matched event's per-scope normalized flux with the dip window.
 
     Mirrors the per-matched-event plot in ``timeline.py``: each scope's curve in
     its colour, the dip window highlighted with an ``axvspan``, the per-scope
@@ -444,24 +465,28 @@ def plot_event(event: MatchedEvent, archive_roots=None, ax=None):
 
         t = np.asarray(data.get("t", []), dtype=float)
         flux = np.asarray(data.get("flux", []), dtype=float)
+        det_f = np.asarray(info.get("det_flux", []), dtype=float)
+        det_c = np.asarray(info.get("det_conv", []), dtype=float)
+
+        flux_norm, flux_scale = _normalize_flux_curve(flux, scale=None)
+        det_f_norm, _ = _normalize_flux_curve(det_f, scale=flux_scale)
+        det_c_norm, _ = _normalize_flux_curve(det_c, scale=flux_scale)
 
         ra = info.get("ra", float("nan"))
         dec = info.get("dec", float("nan"))
         sig = info.get("significance", float("nan"))
         sigma_list.append((scope, f"{sig:.2f}" if np.isfinite(sig) else "nan"))
 
-        if t.size and flux.size:
-            n = min(t.size, flux.size)
+        if t.size and flux_norm.size:
+            n = min(t.size, flux_norm.size)
             ax.plot(
-                t[:n], flux[:n], color=color, lw=0.8, alpha=0.85,
+                t[:n], flux_norm[:n], color=color, lw=0.8, alpha=0.85,
                 label=f"{scope}: ({ra:.4f}, {dec:.4f}) sig={sig:.2f}",
             )
             plotted_any = True
 
         # convolution overlay on the twin axis (over the det window).
         det_t = np.asarray(info.get("det_time", []), dtype=float)
-        det_c = np.asarray(info.get("det_conv", []), dtype=float)
-        det_f = np.asarray(info.get("det_flux", []), dtype=float)
 
         # dip-window extent: map the det window onto the full-minute time axis
         # when we have a full-minute curve; otherwise use the det time column.
@@ -469,14 +494,14 @@ def plot_event(event: MatchedEvent, archive_roots=None, ax=None):
             # full-minute curve present: highlight via flux minimum within the
             # det window's flux signature. The det window covers ~2s; centre the
             # span on the deepest det-flux sample mapped back by value proximity.
-            _highlight_window(ax, t, flux, det_f, color)
+            _highlight_window(ax, t, flux_norm, det_f_norm, color)
         elif det_t.size:
             ax.axvspan(float(det_t.min()), float(det_t.max()),
                        color=color, alpha=0.08)
 
-        if det_c.size:
+        if det_c_norm.size:
             xaxis = det_t if det_t.size == det_c.size else np.arange(det_c.size)
-            twin.plot(xaxis, det_c, color=color, lw=0.7, ls="--", alpha=0.5)
+            twin.plot(xaxis, det_c_norm, color=color, lw=0.7, ls="--", alpha=0.5)
 
     if not plotted_any:
         ax.text(0.5, 0.5, "no light-curve data", ha="center", va="center",
@@ -486,8 +511,8 @@ def plot_event(event: MatchedEvent, archive_roots=None, ax=None):
     sig_str = ", ".join(f"{s}={v}" for s, v in sigma_list)
     ax.set_title(f"{date}: {event.timestamp}-Tier{event.tier}\n{sig_str}")
     ax.set_xlabel("time")
-    ax.set_ylabel("flux")
-    twin.set_ylabel("conv flux")
+    ax.set_ylabel("normalized flux")
+    twin.set_ylabel("normalized conv flux")
     ax.grid(True, alpha=0.3)
     handles, labels = ax.get_legend_handles_labels()
     if handles:
