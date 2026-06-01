@@ -94,6 +94,15 @@ def test_rerun_night_smoke():
     # Summary CSV written.
     assert (out_dir / 'rerun_summary.csv').exists()
 
+    # A second rerun should rebuild the output directory from scratch.
+    stale_file = out_dir / 'stale.txt'
+    stale_file.write_text('stale output should be removed')
+
+    result_2 = rerun_night(TELESCOPE, OBSDATE, config)
+    out_dir_2 = Path(result_2['out_dir'])
+    assert out_dir_2.resolve() == out_dir.resolve()
+    assert not stale_file.exists()
+
     # Live det_*.txt count unchanged (separate output dir => no clobbering).
     n_live_after = len(list(ndir.glob('det_*.txt')))
     assert n_live_after == n_live_before, (

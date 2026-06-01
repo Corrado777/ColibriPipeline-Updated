@@ -150,6 +150,16 @@ def test_plot_event_returns_figure(fixture):
     ev = load_matched_events(fixture["matched"])[0]
     fig = plot_event(ev, archive_roots=fixture["archive_roots"])
     assert isinstance(fig, Figure)
+    assert len(fig.axes) == 3
+
+
+def test_plot_event_zoom_and_binning_options(fixture):
+    from matplotlib.figure import Figure
+    ev = load_matched_events(fixture["matched"])[0]
+    fig = plot_event(ev, archive_roots=fixture["archive_roots"],
+                     zoom_frames=40, bin_frames=2)
+    assert isinstance(fig, Figure)
+    assert len(fig.axes) == 3
 
 
 def test_explore_matches(fixture):

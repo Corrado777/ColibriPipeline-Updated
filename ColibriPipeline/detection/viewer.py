@@ -434,25 +434,127 @@ def _normalize_flux_curve(flux, scale=None):
     return flux / scale, scale
 
 
-def plot_event(event: MatchedEvent, archive_roots=None, ax=None):
-    """Plot a matched event's per-scope normalized flux with the dip window.
+def _bin_curve(t, y, bin_frames=1):
+    """Bin a 1-D time series into consecutive frame groups.
 
-    Mirrors the per-matched-event plot in ``timeline.py``: each scope's curve in
-    its colour, the dip window highlighted with an ``axvspan``, the per-scope
-    convolution overlaid on a twin axis, the title ``"<date>: <ts>-Tier<N>"``
-    plus the per-scope sigma list, and a legend keyed by scope/coords/sigma.
+    The bin size is interpreted in native frames before any zooming. The last
+    partial bin is dropped so the output stays aligned.
+    """
+    t = np.asarray(t, dtype=float)
+    y = np.asarray(y, dtype=float)
+    bin_frames = int(bin_frames)
+
+    if bin_frames <= 1:
+        return t, y
+
+    n = min(t.size, y.size)
+    if n < bin_frames:
+        return t[:0], y[:0]
+
+    n = (n // bin_frames) * bin_frames
+    if n <= 0:
+        return t[:0], y[:0]
+
+    t = t[:n].reshape(-1, bin_frames)
+    y = y[:n].reshape(-1, bin_frames)
+    return np.nanmean(t, axis=1), np.nanmean(y, axis=1)
+
+
+def _median_dt(t):
+    """Best-effort native cadence estimate for a time axis."""
+    t = np.asarray(t, dtype=float)
+    if t.size < 2:
+        return None
+    diffs = np.diff(t)
+    finite = diffs[np.isfinite(diffs) & (diffs > 0)]
+    if not finite.size:
+        return None
+    return float(np.nanmedian(finite))
+
+
+def _event_center_time(curves, event):
+    """Estimate the dip center time for the matched event.
+
+    Prefer the raw full-minute minimum when available; otherwise fall back to
+    the detection-window minimum or the middle of the det-window time axis.
+    """
+    centers = []
+    for scope in _ALL_SCOPES:
+        if scope not in event.per_scope:
+            continue
+        info = event.per_scope[scope]
+        data = curves.get(scope, {})
+        t = np.asarray(data.get("t", []), dtype=float)
+        flux = np.asarray(data.get("flux", []), dtype=float)
+        det_t = np.asarray(info.get("det_time", []), dtype=float)
+        det_f = np.asarray(info.get("det_flux", []), dtype=float)
+
+        if t.size and flux.size and data.get("star_col") is not None:
+            n = min(t.size, flux.size)
+            valid = np.isfinite(t[:n]) & np.isfinite(flux[:n])
+            if np.any(valid):
+                idx_local = int(np.nanargmin(flux[:n][valid]))
+                idx = np.flatnonzero(valid)[idx_local]
+                centers.append(float(t[min(idx, t.size - 1)]))
+                continue
+
+        if det_t.size and det_f.size:
+            valid = np.isfinite(det_t) & np.isfinite(det_f)
+            if np.any(valid):
+                idx_local = int(np.nanargmin(det_f[valid]))
+                idx = np.flatnonzero(valid)[idx_local]
+                centers.append(float(det_t[min(idx, det_t.size - 1)]))
+        elif det_t.size:
+            finite = det_t[np.isfinite(det_t)]
+            if finite.size:
+                centers.append(float(np.nanmedian(finite)))
+
+    if centers:
+        return float(np.nanmedian(centers))
+    return None
+
+
+def _zoom_limits(center_time, zoom_frames, t_axes):
+    """Compute a symmetric zoom window around a center time."""
+    zoom_frames = max(1, int(zoom_frames))
+    candidates = [np.asarray(t, dtype=float) for t in t_axes if np.asarray(t).size]
+    dt = None
+    for t in candidates:
+        dt = _median_dt(t)
+        if dt is not None:
+            break
+    if center_time is None or dt is None:
+        return None
+    half_width = 0.5 * zoom_frames * dt
+    return float(center_time - half_width), float(center_time + half_width)
+
+
+def plot_event(event: MatchedEvent, archive_roots=None, ax=None,
+               zoom_frames=80, bin_frames=1):
+    """Plot a matched event with zoomed raw, zoomed convolution, and full light curves.
+
+    The top panel shows the zoomed, per-star normalized raw light curves, the
+    middle panel shows the zoomed normalized convolved light curves, and the
+    bottom panel shows the full normalized raw light curves. The zoom window is
+    controlled in native frames, and the curves may be binned before plotting.
 
     Returns the matplotlib Figure.
     """
     import matplotlib.pyplot as plt
 
+    curves = event_lightcurves(event, archive_roots=archive_roots)
+    center_time = _event_center_time(curves, event)
+
     if ax is None:
-        fig, ax = plt.subplots(figsize=(9, 5))
+        fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=False)
     else:
         fig = ax.figure
+        fig.clf()
+        axes = fig.subplots(3, 1, sharex=False)
 
-    curves = event_lightcurves(event, archive_roots=archive_roots)
-    twin = ax.twinx()
+    zoom_raw_ax, zoom_conv_ax, full_ax = axes
+    zoom_limits = _zoom_limits(center_time, zoom_frames,
+                               [data.get("t", []) for data in curves.values()])
 
     sigma_list = []
     plotted_any = False
@@ -467,56 +569,88 @@ def plot_event(event: MatchedEvent, archive_roots=None, ax=None):
         flux = np.asarray(data.get("flux", []), dtype=float)
         det_f = np.asarray(info.get("det_flux", []), dtype=float)
         det_c = np.asarray(info.get("det_conv", []), dtype=float)
+        det_t = np.asarray(info.get("det_time", []), dtype=float)
 
         flux_norm, flux_scale = _normalize_flux_curve(flux, scale=None)
         det_f_norm, _ = _normalize_flux_curve(det_f, scale=flux_scale)
         det_c_norm, _ = _normalize_flux_curve(det_c, scale=flux_scale)
+
+        t_zoom, flux_zoom = _bin_curve(t, flux_norm, bin_frames=bin_frames)
+        det_t_zoom, det_f_zoom = _bin_curve(det_t, det_f_norm, bin_frames=bin_frames)
+        det_t_conv, det_c_zoom = _bin_curve(det_t, det_c_norm, bin_frames=bin_frames)
+        t_full, flux_full = _bin_curve(t, flux_norm, bin_frames=bin_frames)
 
         ra = info.get("ra", float("nan"))
         dec = info.get("dec", float("nan"))
         sig = info.get("significance", float("nan"))
         sigma_list.append((scope, f"{sig:.2f}" if np.isfinite(sig) else "nan"))
 
-        if t.size and flux_norm.size:
-            n = min(t.size, flux_norm.size)
-            ax.plot(
-                t[:n], flux_norm[:n], color=color, lw=0.8, alpha=0.85,
-                label=f"{scope}: ({ra:.4f}, {dec:.4f}) sig={sig:.2f}",
+        label = f"{scope}: ({ra:.4f}, {dec:.4f}) sig={sig:.2f}"
+
+        if t_zoom.size and flux_zoom.size:
+            zoom_raw_ax.plot(
+                t_zoom, flux_zoom, color=color, lw=0.8, alpha=0.85,
+                label=label,
             )
             plotted_any = True
 
-        # convolution overlay on the twin axis (over the det window).
-        det_t = np.asarray(info.get("det_time", []), dtype=float)
+        if det_t_conv.size and det_c_zoom.size:
+            zoom_conv_ax.plot(
+                det_t_conv, det_c_zoom, color=color, lw=0.8, alpha=0.85,
+                label=label,
+            )
+            plotted_any = True
 
-        # dip-window extent: map the det window onto the full-minute time axis
-        # when we have a full-minute curve; otherwise use the det time column.
+        if t_full.size and flux_full.size:
+            full_ax.plot(
+                t_full, flux_full, color=color, lw=0.8, alpha=0.85,
+                label=label,
+            )
+
+        if zoom_limits is not None:
+            zoom_raw_ax.axvspan(zoom_limits[0], zoom_limits[1],
+                                color=color, alpha=0.05)
+            zoom_conv_ax.axvspan(zoom_limits[0], zoom_limits[1],
+                                 color=color, alpha=0.05)
+
         if data.get("star_col") is not None and t.size and det_t.size:
-            # full-minute curve present: highlight via flux minimum within the
-            # det window's flux signature. The det window covers ~2s; centre the
-            # span on the deepest det-flux sample mapped back by value proximity.
-            _highlight_window(ax, t, flux_norm, det_f_norm, color)
+            if zoom_limits is not None:
+                zoom_raw_ax.axvspan(float(det_t.min()), float(det_t.max()),
+                                    color=color, alpha=0.08)
+                full_ax.axvspan(float(det_t.min()), float(det_t.max()),
+                                color=color, alpha=0.08)
         elif det_t.size:
-            ax.axvspan(float(det_t.min()), float(det_t.max()),
-                       color=color, alpha=0.08)
-
-        if det_c_norm.size:
-            xaxis = det_t if det_t.size == det_c.size else np.arange(det_c.size)
-            twin.plot(xaxis, det_c_norm, color=color, lw=0.7, ls="--", alpha=0.5)
+            zoom_raw_ax.axvspan(float(det_t.min()), float(det_t.max()),
+                                color=color, alpha=0.08)
+            full_ax.axvspan(float(det_t.min()), float(det_t.max()),
+                            color=color, alpha=0.08)
 
     if not plotted_any:
-        ax.text(0.5, 0.5, "no light-curve data", ha="center", va="center",
-                transform=ax.transAxes)
+        for panel in axes:
+            panel.text(0.5, 0.5, "no light-curve data", ha="center", va="center",
+                       transform=panel.transAxes)
 
     date = _event_date(event)
     sig_str = ", ".join(f"{s}={v}" for s, v in sigma_list)
-    ax.set_title(f"{date}: {event.timestamp}-Tier{event.tier}\n{sig_str}")
-    ax.set_xlabel("time")
-    ax.set_ylabel("normalized flux")
-    twin.set_ylabel("normalized conv flux")
-    ax.grid(True, alpha=0.3)
-    handles, labels = ax.get_legend_handles_labels()
-    if handles:
-        ax.legend(loc="lower left", fontsize=8)
+    zoom_raw_ax.set_title(f"{date}: {event.timestamp}-Tier{event.tier}\n{sig_str}")
+    zoom_raw_ax.set_ylabel("normalized raw flux")
+    zoom_conv_ax.set_ylabel("normalized conv flux")
+    full_ax.set_ylabel("normalized raw flux")
+    full_ax.set_xlabel("time")
+    zoom_raw_ax.grid(True, alpha=0.3)
+    zoom_conv_ax.grid(True, alpha=0.3)
+    full_ax.grid(True, alpha=0.3)
+
+    if zoom_limits is not None:
+        zoom_raw_ax.set_xlim(*zoom_limits)
+        zoom_conv_ax.set_xlim(*zoom_limits)
+
+    for panel, loc in ((zoom_raw_ax, "lower left"),
+                       (zoom_conv_ax, "lower left"),
+                       (full_ax, "lower left")):
+        handles, labels = panel.get_legend_handles_labels()
+        if handles:
+            panel.legend(loc=loc, fontsize=8)
 
     fig.tight_layout()
     return fig
@@ -546,13 +680,14 @@ def _highlight_window(ax, t, flux, det_flux, color):
 #  Interactive explorer (ipywidgets imported lazily)
 # --------------------------------------------------------------------------- #
 
-def explore_matches(matched_dir, archive_roots=None):
+def explore_matches(matched_dir, archive_roots=None, *, zoom_frames=80, bin_frames=1):
     """Interactive ipywidgets explorer for matched events.
 
     Mirrors ``lightcurve_analysis.widgets.explore``: a tier filter, a
-    significance-min slider, Prev/Next buttons, and an Output area that calls
-    :func:`plot_event` for the current filtered event. ipywidgets is imported
-    INSIDE this function so the module imports headlessly without it.
+    significance-min slider, zoom-width and bin-size sliders, Prev/Next
+    buttons, and an Output area that calls :func:`plot_event` for the current
+    filtered event. ipywidgets is imported INSIDE this function so the module
+    imports headlessly without it.
 
     Returns the assembled widget (a VBox) so it displays in Jupyter. If
     ipywidgets is unavailable, prints a notice and returns a callable that
@@ -596,6 +731,12 @@ def explore_matches(matched_dir, archive_roots=None):
     sig_slider = W.FloatSlider(value=0.0, min=0.0, max=max(sig_max, 1.0),
                                step=0.5, description="sig min",
                                continuous_update=False)
+    zoom_slider = W.IntSlider(value=int(zoom_frames), min=20, max=400, step=1,
+                              description="zoom frames",
+                              continuous_update=False)
+    bin_slider = W.IntSlider(value=max(1, int(bin_frames)), min=1, max=50,
+                             step=1, description="bin frames",
+                             continuous_update=False)
     prev_btn = W.Button(description="< Prev")
     next_btn = W.Button(description="Next >")
     label = W.Label(value="")
@@ -635,7 +776,12 @@ def explore_matches(matched_dir, archive_roots=None):
             label.value = f"event {i + 1}/{len(filtered)}: {ev.timestamp}-Tier{ev.tier}"
             try:
                 with plt.ioff():
-                    fig = plot_event(ev, archive_roots=archive_roots)
+                    fig = plot_event(
+                        ev,
+                        archive_roots=archive_roots,
+                        zoom_frames=zoom_slider.value,
+                        bin_frames=bin_slider.value,
+                    )
                 display(fig)
                 plt.close(fig)
             except Exception as exc:  # noqa: BLE001
@@ -654,6 +800,8 @@ def explore_matches(matched_dir, archive_roots=None):
 
     tier_toggle.observe(_on_filter_change, names="value")
     sig_slider.observe(_on_filter_change, names="value")
+    zoom_slider.observe(_on_filter_change, names="value")
+    bin_slider.observe(_on_filter_change, names="value")
     prev_btn.on_click(lambda _b: _step(-1))
     next_btn.on_click(lambda _b: _step(+1))
 
@@ -662,6 +810,7 @@ def explore_matches(matched_dir, archive_roots=None):
 
     controls = W.VBox([
         W.HBox([tier_toggle, sig_slider]),
+        W.HBox([zoom_slider, bin_slider]),
         W.HBox([prev_btn, next_btn, label]),
     ])
     ui = W.VBox([controls, out])

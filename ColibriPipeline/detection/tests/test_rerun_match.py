@@ -56,6 +56,18 @@ def test_rerun_match_green_blue():
     matched_dir = Path(result['matched_dir'])
     assert matched_dir.exists()
 
+    # A second rerun should recreate the matched tree rather than append to it.
+    stale_dir = matched_dir / 'stale-Tier9'
+    stale_dir.mkdir(parents=True, exist_ok=True)
+    (stale_dir / 'det_stale.txt').write_text('stale match should be removed')
+
+    result_2 = rerun_match(OBSDATE, config,
+                           telescopes=['GREENBIRD', 'BLUEBIRD'],
+                           sim_root=_SIM_ROOT)
+    matched_dir_2 = Path(result_2['matched_dir'])
+    assert matched_dir_2.resolve() == matched_dir.resolve()
+    assert not stale_dir.exists()
+
     # At least one Tier directory with >= 1 det file (Green/Blue identical).
     tier_dirs = sorted(matched_dir.glob('*-Tier*'))
     assert tier_dirs, f"no Tier dirs in {matched_dir}"

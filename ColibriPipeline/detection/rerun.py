@@ -47,6 +47,15 @@ from .width import canonical_width_frames, canonical_width_from_radec
 EVENT_WIDTH = 1.0
 
 
+def _reset_output_dir(path):
+    """Create a clean output directory, removing any prior contents first."""
+    path = Path(path)
+    if path.exists():
+        shutil.rmtree(path)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Local stars.npy loader (replicates detection_trade_study.lightcurves.load_minute
 # WITHOUT importing that package).
@@ -395,8 +404,7 @@ def rerun_night(telescope, date, config, *, out_tag='rerun',
                                 telescope=telescope, sim_root=sim_root)
     ndir = night_dir(root, date)
 
-    out_dir = ndir / f'{out_tag}_{config.detector}'
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = _reset_output_dir(ndir / f'{out_tag}_{config.detector}')
 
     stars_files = sorted(ndir.glob('*_stars.npy'))
 
@@ -501,8 +509,8 @@ def rerun_match(date, config, *, telescopes=None, out_tag='rerun',
     # Shared matched location anchored on GREENBIRD's night dir.
     green_root = resolve_archive_root(archive_root=archive_root,
                                       telescope='GREENBIRD', sim_root=sim_root)
-    matched_dir = night_dir(green_root, date) / f'{out_tag}_{config.detector}' / 'matched'
-    matched_dir.mkdir(parents=True, exist_ok=True)
+    matched_dir = _reset_output_dir(
+        night_dir(green_root, date) / f'{out_tag}_{config.detector}' / 'matched')
 
     n_active = len(active)
     written = []
