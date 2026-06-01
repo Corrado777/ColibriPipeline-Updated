@@ -30,6 +30,7 @@ from copy import deepcopy
 import colibri_image_reader as cir
 import colibri_photometry as cp
 import colibri_tools as ct
+from detection import DetectionConfig, make_detector, canonical_width_frames
 
 # Disable Warnings
 import warnings
@@ -223,7 +224,8 @@ def writePrimarySummary(obsdate, processing_time='None'):
 
 def firstOccSearch(minuteDir, MasterDarkList, kernel, exposure_time, sigma_threshold,
                    base_path,obs_date,
-                   telescope='TEST',RCDfiles = True, gain_high = True):
+                   telescope='TEST',RCDfiles = True, gain_high = True,
+                   detection_config=None):
     """ 
     Formerly 'main'.
     Detect possible occultation events in selected file and archive results 
@@ -253,6 +255,11 @@ def firstOccSearch(minuteDir, MasterDarkList, kernel, exposure_time, sigma_thres
 ## Analysis Setup
 ###########################
 
+    ## Default detection config so existing direct callers still work
+    if detection_config is None:
+        detection_config = DetectionConfig(sigma_threshold=sigma_threshold,
+                                           exposure_time=exposure_time)
+
     print (f"{datetime.datetime.now()} Opening: {minuteDir}")
 
     ## Create folder for results
@@ -271,6 +278,11 @@ def firstOccSearch(minuteDir, MasterDarkList, kernel, exposure_time, sigma_thres
     ## Idenitify important characteristics from name and length of images list
     field_name = imagePaths[0].name.split('_')[0]  #which of 24 fields are observed
     x_length, y_length, num_images = cir.getSizeRCD(imagePaths)
+
+    ## Build the dip detector once per minute (canonical box width from the
+    ## field's opposition angle by default; Ricker preserved as an option).
+    width = canonical_width_frames(field_name, obs_date, exposure_time, detection_config)
+    detector = make_detector(detection_config, width)
 
     print(datetime.datetime.now(), "Imported", num_images, "frames")
     
@@ -537,7 +549,7 @@ def firstOccSearch(minuteDir, MasterDarkList, kernel, exposure_time, sigma_thres
 ###########################
    
     #loop through each detected object
-    dipResults = np.array([cp.dipDetection(starData[:, starNum, 2], kernel, starNum, sigma_threshold) for starNum in range(0,num_stars)],
+    dipResults = np.array([detector.detect(starData[:, starNum, 2]) for starNum in range(0,num_stars)],
                           dtype=object)
    
     
@@ -712,7 +724,16 @@ if __name__ == '__main__':
     arg_parser.add_argument('-g', '--lowgain', help='Analyze low-gain images', action='store_false')
     arg_parser.add_argument('-t', '--test', help='Test functionality for Peter Quigley', action='store_true')
     arg_parser.add_argument('-r', '--reprocess', help='Reprocess all data', action='store_true')
-    
+    arg_parser.add_argument('--detector', choices=['box', 'ricker'], default='box',
+                            help='Dip detector to use (default: box matched filter)')
+    arg_parser.add_argument('--canonical-width', type=int, default=None,
+                            help='Explicit box width in frames (overrides opposition-angle auto-compute)')
+    arg_parser.add_argument('--opposition-angle', type=float, default=None,
+                            help='Explicit opposition angle in degrees (overrides field-based auto-compute)')
+    arg_parser.add_argument('--coincidence-mode', choices=['post_threshold', 'joint_statistic'],
+                            default='post_threshold',
+                            help='Multi-telescope coincidence mode (default: post_threshold)')
+
     ## Process argparse list as useful variables
     cml_args = arg_parser.parse_args()
     
@@ -788,6 +809,14 @@ if __name__ == '__main__':
     kernel_frames = int(round(expected_length / exposure_time))   # width of kernel
     ricker_kernel = RickerWavelet1DKernel(kernel_frames)          # generate kernel
 
+    ## Build the detection config from CLI args (box detector is the default)
+    detection_config = DetectionConfig(detector=cml_args.detector,
+                                       sigma_threshold=sigma_threshold,
+                                       exposure_time=exposure_time,
+                                       canonical_width=cml_args.canonical_width,
+                                       opposition_angle_deg=cml_args.opposition_angle,
+                                       coincidence_mode=cml_args.coincidence_mode)
+
 
     ''''run pipeline for each folder of data'''
  
@@ -805,7 +834,7 @@ if __name__ == '__main__':
         pool_size = max(1, multiprocessing.cpu_count() - 2)
         mp_ctx = multiprocessing.get_context('spawn')
         args = ((minute_dirs[f], MasterDarkList, ricker_kernel, exposure_time, sigma_threshold,
-                 base_path,obs_date,telescope,RCDfiles,gain_high) for f in range(len(minute_dirs)))
+                 base_path,obs_date,telescope,RCDfiles,gain_high,detection_config) for f in range(len(minute_dirs)))
         
         try:
             with mp_ctx.Pool(pool_size) as pool:
@@ -837,7 +866,7 @@ if __name__ == '__main__':
         star_counts = []
         for f in range(len(minute_dirs)):
             star_count = firstOccSearch(minute_dirs[f], MasterDarkList, ricker_kernel, exposure_time, sigma_threshold,
-                                        base_path,obs_date,telescope,RCDfiles,gain_high)
+                                        base_path,obs_date,telescope,RCDfiles,gain_high,detection_config)
             star_counts.append(star_count)
 
         # Write summary file
@@ -855,7 +884,7 @@ if __name__ == '__main__':
         star_counts = []
         for f in range(len(minute_dirs)):
             star_count = firstOccSearch(minute_dirs[f], MasterDarkList, ricker_kernel, exposure_time, sigma_threshold,
-                                        base_path,obs_date,telescope,RCDfiles,gain_high)
+                                        base_path,obs_date,telescope,RCDfiles,gain_high,detection_config)
             star_counts.append(star_count)
 
         # Write summary file

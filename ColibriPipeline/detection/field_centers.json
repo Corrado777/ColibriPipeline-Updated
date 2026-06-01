@@ -1,0 +1,7 @@
+{
+  "_comment": "Field-name -> sky-pointing lookup for canonical-width auto-compute. Keys are the categorical field names used as the RCD filename prefix (e.g. 'field1'..'field24'); values give the field-center pointing in DEGREES as {'ra_deg': <ICRS RA>, 'dec_deg': <ICRS Dec>}. THESE ARE PLACEHOLDERS spread along the ecliptic (where KBO occultation fields sit) and MUST be replaced with the observatory's real field-center table. A field that is absent from this file is NOT an error: width.canonical_width_frames falls back to config.width_at_opposition for any unknown name.",
+  "field1": {"ra_deg": 0.0, "dec_deg": 0.0},
+  "field2": {"ra_deg": 90.0, "dec_deg": 23.4},
+  "field3": {"ra_deg": 180.0, "dec_deg": 0.0},
+  "field4": {"ra_deg": 270.0, "dec_deg": -23.4}
+}
