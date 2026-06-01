@@ -31,6 +31,8 @@ from datetime import datetime,date,timedelta
 
 # Custom Script Imports
 import generate_specific_lightcurve as gsl
+from detection import DetectionConfig
+from detection.coincidence import active_telescopes, post_threshold_match, Detection
 
 
 #-------------------------------global vars-----------------------------------#
@@ -202,287 +204,104 @@ if __name__ == '__main__':
     arg_parser.add_argument('--coord-tolerance', type=float, default=COORD_TOLERANCE,
                             help=f'Match cone radius in degrees (default {COORD_TOLERANCE} = 7 arcsec). '
                                  'Raise (e.g. 0.05) to recover nights from before a pointing correction.')
+    arg_parser.add_argument('--coincidence-mode', choices=['post_threshold', 'joint_statistic'],
+                            default='post_threshold',
+                            help='Multi-telescope coincidence mode (default: post_threshold).')
 
     # Process argparse list as useful variables
     cml_args  = arg_parser.parse_args()
     obsdate   = cml_args.date
     coord_tolerance = cml_args.coord_tolerance
+    coincidence_mode = cml_args.coincidence_mode
 
-    # Initialize telescope classes
-    Red   = Telescope("RED", RED_BASE, obsdate)
-    Green = Telescope("GREEN", GREEN_BASE, obsdate)
-    Blue  = Telescope("BLUE", BLUE_BASE, obsdate)
+    # Per-scope archive bases (matches the coincidence module's scope names)
+    SCOPE_BASES = {"REDBIRD": RED_BASE, "GREENBIRD": GREEN_BASE, "BLUEBIRD": BLUE_BASE}
+    SCOPE_TELESCOPES = {scope: Telescope(scope, base, obsdate)
+                        for scope, base in SCOPE_BASES.items()}
+
+    # Initialize telescope classes (keep legacy names for writeGenerateCmds)
+    Red   = SCOPE_TELESCOPES["REDBIRD"]
+    Green = SCOPE_TELESCOPES["GREENBIRD"]
+    Blue  = SCOPE_TELESCOPES["BLUEBIRD"]
 
     # Setup matched directory structure
     matched_dir = Green.obs_archive / "matched"
     if not matched_dir.exists():
         matched_dir.mkdir(parents=True, exist_ok=True)
 
-
-###########################
-## 1 Second Matching
-###########################
-
-    ## How to do this:
-    # 1. Loop through all Green detections
-    # 2. Check if the time is within 1 second of a detection of any Red detections
-    # 3. Check if the time is within 1 second of a detection of any Blue detections
-    # 4. If both are true, copy the detections to a matched directory
-    # 5. Repeat for all Red detections
-
-    # Match detections in time to the second
-    for G_time in Green.det_times:
-
-        # Check if the time is within 1 second of a detection of any Red detections
-        for R_time in Red.det_times:
-            if abs((G_time - R_time).total_seconds()) <= 1:
-
-                # Check if the time is within 1 second of a detection of any Blue detections
-                for B_time in Blue.det_times:
-                    if abs((G_time - B_time).total_seconds()) <= 1:
-
-                        # Matched detections found, copy to matched directory
-                        G_det = Green.det_dict[G_time]
-                        R_det = Red.det_dict[R_time]
-                        B_det = Blue.det_dict[B_time]
-
-                        # Create matched directory if it doesn't exist
-                        match_dir = matched_dir / R_time.strftime(BARE_FORMAT)
-                        if not match_dir.exists():
-                            match_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Copy files to matched directory
-                        shutil.copy(G_det, match_dir)
-                        shutil.copy(R_det, match_dir)
-                        shutil.copy(B_det, match_dir)
-
-
-                        # Log matched detections
-                        print(f"Matched {G_det.name} to {R_det.name} and {B_det.name}!")
-
-                        # Break out of the Blue loop
-                        break
-
-                # If no match was found with Blue, copy Red and Green
-                else:
-                    # Matched detections found, copy to matched directory
-                    G_det = Green.det_dict[G_time]
-                    R_det = Red.det_dict[R_time]
-
-                    # Create matched directory if it doesn't exist
-                    match_dir = matched_dir / R_time.strftime(BARE_FORMAT)
-                    if not match_dir.exists():
-                        match_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Copy files to matched directory
-                    shutil.copy(G_det, match_dir)
-                    shutil.copy(R_det, match_dir)
-
-                    # Log matched detections
-                    print(f"Matched {G_det.name} to {R_det.name}!")
-
-                # Break out of the Red loop
-                break
-
-        # If no match was found with Red, check Blue
-        else:
-
-            for B_time in Blue.det_times:
-                if abs((G_time - B_time).total_seconds()) <= 1:
-
-                    # Matched detections found, copy to matched directory
-                    G_det = Green.det_dict[G_time]
-                    B_det = Blue.det_dict[B_time]
-
-                    # Create matched directory if it doesn't exist
-                    match_dir = matched_dir / G_time.strftime(BARE_FORMAT)
-                    if not match_dir.exists():
-                        match_dir.mkdir(parents=True, exist_ok=True)
-
-                    # Copy files to matched directory
-                    shutil.copy(G_det, match_dir)
-                    shutil.copy(B_det, match_dir)
-
-
-                    # Log matched detections
-                    print(f"Matched {G_det.name} to {B_det.name}!")
-
-                    # Break out of the Blue loop
-                    break
-
-    # Check matches between Red and Blue
-    for R_time in Red.det_times:
-
-        # Check if the time is within 1 second of a detection of any Red detections
-        for B_time in Blue.det_times:
-            if abs((R_time - B_time).total_seconds()) <= 1:
-
-                # Matched detections found, copy to matched directory
-                R_det = Red.det_dict[R_time]
-                B_det = Blue.det_dict[B_time]
-
-                # Create matched directory if it doesn't exist
-                match_dir = matched_dir / R_time.strftime(BARE_FORMAT)
-                if not match_dir.exists():
-                    match_dir.mkdir(parents=True, exist_ok=True)
-
-                # Copy files to matched directory
-                shutil.copy(R_det, match_dir)
-                shutil.copy(B_det, match_dir)
-
-                # Log matched detections
-                print(f"Matched {R_det.name} to {B_det.name}!")
-
-                # Break out of the Blue loop
-                break
-
-
-    # Check that at least one match was found
-    if not any(matched_dir.iterdir()):
-        print("No time matches tonight!")
-        Red.writeGenerateCmds()
-        Green.writeGenerateCmds()
-        Blue.writeGenerateCmds()
-        sys.exit()
-
-    # Otherwise setup to tier the matches
-    tier1,tier2,tier3 = [],[],[]
+    # Build the detection config carrying the current tolerances + mode
+    config = DetectionConfig(time_tolerance_s=TIME_TOLERANCE,
+                             coord_tolerance_deg=coord_tolerance,
+                             coincidence_mode=coincidence_mode)
 
 
 ###########################
-## Coordinate Matching
+## Coincidence Matching
 ###########################
 
-    # Check that the matched events are within the coordinate tolerance
-    # Otherwise, delete the match and move on
-    for match_dir in matched_dir.iterdir():
+    # Determine which scopes actually produced detections for the night
+    active = active_telescopes(obsdate)
+    print(f"Active telescopes tonight: {sorted(active)}")
 
-        # Get the coordinates of the match files
-        matched_det_coords = [readRAdec(det) for det in match_dir.iterdir()]
+    # Parse each active scope's det_*.txt into Detection records
+    detections_by_scope = {}
+    for scope in active:
+        tel = SCOPE_TELESCOPES[scope]
+        dets = []
+        for det_time, det_path in tel.det_dict.items():
+            ra, dec = readRAdec(det_path)
+            dets.append(Detection(time=det_time, ra=ra, dec=dec, path=str(det_path)))
+        detections_by_scope[scope] = dets
 
-        # Check if the match coordinates are within tolerance of each other
-        # Delete the match directory if not
-        for tel1,tel2 in itertools.combinations(matched_det_coords, 2):
-            # readRAdec returns (inf, inf) when the RA/Dec line couldn't be
-            # parsed. Skip those pairs explicitly so we don't silently fail
-            # the tolerance test via NaN arithmetic.
-            if not (np.isfinite(tel1[0]) and np.isfinite(tel1[1])
-                    and np.isfinite(tel2[0]) and np.isfinite(tel2[1])):
-                print(f"{match_dir.name} pair skipped: missing RA/Dec on one side.")
-                continue
-            if (np.hypot((tel1[0] - tel2[0])/np.cos(tel1[1]*np.pi/180), tel1[1] - tel2[1]) <= coord_tolerance):
+    # Delegate the AND coincidence to the detection module
+    matches = post_threshold_match(active, detections_by_scope, config)
 
-                # Log the match and break out of the loop
-                # NOTE: This requires only that one pair of coordinates is within tolerance
-                print(f"{match_dir.name} matched stars.")
-                break
-        else:
-            print(f"{match_dir.name} is not matched to the same star. Deleting...")
-            shutil.rmtree(match_dir)
-        
+    # Drive the matched/<timestamp>-Tier<N>/ directory output from the matches.
+    # A match must involve >= 2 scopes to constitute a cross-telescope
+    # coincidence (single-scope nights leave matched/ empty, as before).
+    n_active = len(active)
+    any_match = False
+    for match in matches:
+        scopes = match['scopes']
+        tier = match['tier']
 
-###########################
-## Refine Second Matching
-###########################
-
-    # Iterate through match directories and refine time matching
-    for match_dir in matched_dir.iterdir():
-
-        # Get the time of the match files
-        matched_det_times = [datetime.strptime(DET_TIME_REGEX.match(det.name).group(1), BARE_FORMAT)
-                            for det in match_dir.iterdir()]
-        
-        # Check if the match times are within tolerance of each other
-        # Tier 1 if only 1-second match, tier 2/3 if tolerance match
-        for tel1,tel2 in itertools.combinations(matched_det_times, 2):
-            if abs((tel1 - tel2).total_seconds()) <= TIME_TOLERANCE:
-
-                # Get number of detections in the match directory
-                num_det = len(list(match_dir.iterdir()))
-                
-                # Log the match as tier 2 if two detection files exist
-                if num_det == 2:
-                    print(f"{match_dir.name} is a tier 2 match.")
-                    tier2.append(match_dir)
-
-                # Log the match as tier 3 if three detection files exist
-                elif num_det == 3:
-                    print(f"{match_dir.name} is a tier 3 match.")
-                    tier3.append(match_dir)
-                
-                # Log the match as tier 1 if an unexpected number of detections exist
-                else:
-                    print(f"{match_dir.name} is a tier 1 match because of strangeness.")
-                    tier1.append(match_dir)
-
-                break
-        else:
-            print(f"{match_dir.name} is a tier 1 match.")
-            tier1.append(match_dir)
-
-
-###########################
-## Generate Artificial Lightcurves
-###########################
-
-    # Check which telescopes are represented in each tier
-    for match_dir in matched_dir.iterdir():
-        # If we can find the name in here, request an aritifical lightcurve
-        R_here,G_here,B_here = False,False,False
-
-        # Check which telescopes are represented
-        matched_det_file = [det for det in match_dir.iterdir()]
-        for file in matched_det_file:
-            if "REDBIRD" in file.name:
-                R_here = True
-            elif "GREENBIRD" in file.name:
-                G_here = True
-            elif "BLUEBIRD" in file.name:
-                B_here = True
-
-        # If all 3 exist, move onto the next matched dir
-        if R_here and G_here and B_here:
+        # A lone detection (tier 1 on a multi-scope night) is not a coincidence.
+        if tier < 2 and n_active >= 2:
             continue
 
-        # Get event parameters
-        timestamp = datetime.strptime(match_dir.name.split('-Tier')[0],
-                                        BARE_FORMAT)
-        timestamp = timestamp.strftime(TIMESTAMP_FORMAT)
-        radec = readRAdec(matched_det_file[0])
+        any_match = True
 
-        # If we don't have all three, request an artificial lightcurve
-        if not R_here:
-            command = f"{obsdate} {timestamp} {radec[0]} {radec[1]}"
-            Red.gen_artificial.append(command)
-        elif not G_here:
-            command = f"{obsdate} {timestamp} {radec[0]} {radec[1]}"
-            Green.gen_artificial.append(command)
-        elif not B_here:
-            command = f"{obsdate} {timestamp} {radec[0]} {radec[1]}"
-            Blue.gen_artificial.append(command)
+        # Representative timestamp drives the directory name (matches legacy)
+        rep_time = match['time']
+        if not isinstance(rep_time, datetime):
+            rep_time = datetime.fromtimestamp(float(rep_time))
+        dir_name = rep_time.strftime(BARE_FORMAT)
 
+        match_dir = matched_dir / f"{dir_name}-Tier{tier}"
+        if not match_dir.exists():
+            match_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write generate_artificial.txt on all 3 telescopes
+        # Copy the participating det files
+        for scope in scopes:
+            det_path = match['paths'].get(scope)
+            if det_path is not None:
+                shutil.copy(det_path, match_dir)
+        print(f"Tier{tier} match {dir_name}: {sorted(scopes)}")
+
+        # Queue artificial-lightcurve generation for active scopes missing here
+        timestamp = rep_time.strftime(TIMESTAMP_FORMAT)
+        radec = (match['ra'], match['dec'])
+        for scope in active:
+            if scope not in scopes:
+                command = f"{obsdate} {timestamp} {radec[0]} {radec[1]}"
+                SCOPE_TELESCOPES[scope].gen_artificial.append(command)
+
+    if not any_match:
+        print("No coincident matches tonight!")
+
+    # Write generate_artificial.txt on all 3 telescopes (touch if empty)
     Red.writeGenerateCmds()
     Green.writeGenerateCmds()
     Blue.writeGenerateCmds()
-    
-
-###########################
-## Rename Directories
-###########################
-
-    # Rename tier 1 directories
-    for match_dir in tier1:
-        match_dir.rename(matched_dir / f"{match_dir.name}-Tier1")
-    
-    # Rename tier 2 directories
-    for match_dir in tier2:
-        match_dir.rename(matched_dir / f"{match_dir.name}-Tier2")
-
-    # Rename tier 3 directories
-    for match_dir in tier3:
-        match_dir.rename(matched_dir / f"{match_dir.name}-Tier3")
-
 
     print("Done!")
