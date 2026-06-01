@@ -210,8 +210,13 @@ def plot_single(lc, ax=None, title=None, show_gaps=True, time_mode='hours',
         ax.scatter(x[good], f[good], s=4, color=_LINE_COLOR,
                    label=lc.kind, rasterized=True)
     else:
-        if show_gaps:
+        if show_gaps and not lc.bin_seconds:
             # Re-derive gap breaks on the unix-time axis, then map to plot x.
+            # Skip for binned data: gap_mask's 1/40 Hz threshold flags every
+            # bin-to-bin interval as a gap, inserting NaN between every point
+            # and making isolated points invisible in a line-only plot.
+            # Binned LightCurves already use NaN for empty bins, so matplotlib
+            # breaks the line at real gaps naturally.
             tb, fb = _insert_gap_breaks(t, f)
             xb, _ = _time_for_plot(tb, mode=time_mode)
             ax.plot(xb, fb, '-', lw=0.8, color=_LINE_COLOR, label=lc.kind)
